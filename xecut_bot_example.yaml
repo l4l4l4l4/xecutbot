@@ -6,6 +6,17 @@ telegram_bot:
   public_channel_id: 0
   # this can be user id, just don't forget to start chat with the bot first
   alert_chat_id: 0
+  # Finance stays disabled until the operator supplies the real values and full roster.
+  money:
+    enabled: false
+    minimum_monthly_euros: null # REQUIRED quoted EUR decimal, no assumed minimum
+    financier_user_id: null # REQUIRED numeric Telegram user ID, never a username
+    contact: "@rvbar_el3"
+    start_month: null # REQUIRED YYYY-MM; immutable after initialization
+    minimum_effective_month: null # First policy defaults to start_month
+    initial_member_ids: [] # REQUIRED full human roster of private_chat_id
+    initial_roster_complete: false # Set true only after explicit full-roster import
+    chart_months: 12 # 1..36
 db:
   sqlite_path: "xecut_bot.sqlite?mode=rwc"
 backend:

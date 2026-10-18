@@ -168,6 +168,7 @@ pub async fn connect_db(db_config: &DbConfig) -> Result<SqlitePool> {
 impl BackendImpl {
     pub async fn new(config_files: Vec<PathBuf>) -> Result<Arc<Self>> {
         let config = Config::new("xecut_bot", config_files)?;
+        config.telegram_bot.money.validate()?;
 
         let pool = connect_db(&config.db).await?;
 

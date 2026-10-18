@@ -26,3 +26,6 @@ devenv.local.nix
 
 # logs
 *.log
+
+# Python dispatcher smoke fixture
+/tests/__pycache__/

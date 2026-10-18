@@ -2,6 +2,7 @@ pub mod backend;
 pub mod bot;
 pub mod config;
 pub mod datetime;
+pub mod money;
 pub mod rest_api;
 pub mod selfupdate;
 pub mod visits;

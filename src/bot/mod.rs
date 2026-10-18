@@ -1,5 +1,6 @@
 mod announcements;
 mod livestatus;
+mod money;
 mod person_details;
 mod status;
 mod util;
@@ -16,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 
 use teloxide::{
     Bot,
-    dispatching::{HandlerExt as _, UpdateFilterExt as _},
+    dispatching::UpdateFilterExt as _,
     dptree,
     prelude::{Dispatcher, Requester as _},
     types::{CallbackQuery, Message, MessageId, Update},
@@ -26,7 +27,7 @@ use teloxide::{
 use crate::backend::Uid;
 use crate::{backend::Backend, config::TelegramBotConfig};
 
-#[derive(BotCommands, Clone, Copy)]
+#[derive(BotCommands, Clone)]
 #[command(rename_rule = "lowercase")]
 enum Command {
     #[command(
@@ -55,6 +56,10 @@ enum Command {
     LiveStatus,
     #[command(description = "🧟 Убрать закреп с текущей информацией о спейсе")]
     UnLiveStatus,
+    #[command(description = "💶 EUR ledger (use /help money)")]
+    Money(String),
+    #[command(description = "📖 Command help (optional: money)")]
+    Help(String),
     #[command(hide)]
     Update,
 }
@@ -64,15 +69,20 @@ pub struct TelegramBot<B: Backend> {
     pub bot: Bot,
     status_message_id: RwLock<Option<MessageId>>,
     backend: Weak<B>,
+    money: std::sync::OnceLock<crate::money::Money>,
+    money_card_lock: tokio::sync::Mutex<()>,
 }
 
 impl<B: Backend> TelegramBot<B> {
     pub fn new(config: TelegramBotConfig, backend: Weak<B>) -> Result<Arc<Self>> {
+        config.money.validate()?;
         let bot = Bot::new(config.bot_token.clone());
         Ok(Arc::new(TelegramBot {
             config,
             bot,
             status_message_id: RwLock::new(None),
+            money: std::sync::OnceLock::new(),
+            money_card_lock: tokio::sync::Mutex::new(()),
             backend,
         }))
     }
@@ -91,6 +101,7 @@ impl<B: Backend> TelegramBot<B> {
 
     pub async fn run(self: Arc<Self>, ct: CancellationToken) -> Result<()> {
         self.bot.set_my_commands(Command::bot_commands()).await?;
+        self.initialize_money().await?;
 
         *self.status_message_id.write().unwrap() =
             livestatus::load_status_message_id(self.backend().pool()).await?;
@@ -101,9 +112,18 @@ impl<B: Backend> TelegramBot<B> {
             })
             .branch(
                 Update::filter_message()
-                    .filter_command::<Command>()
-                    .endpoint(Self::handle_message),
+                    .inspect_async(Self::observe_money_message)
+                    .branch(
+                        dptree::entry()
+                            .filter_map(|msg: Message, me: teloxide::types::Me| {
+                                let text = msg.text()?;
+                                money::parse_command(text, me.username())
+                            })
+                            .endpoint(Self::handle_message),
+                    ),
             )
+            .branch(Update::filter_chat_member().endpoint(Self::handle_money_member))
+            .branch(Update::filter_message_reaction_updated().endpoint(Self::handle_money_reaction))
             .branch(Update::filter_callback_query().endpoint(Self::handle_callback_outer));
 
         let mut dispatcher = Dispatcher::builder(self.bot.clone(), handler)
@@ -121,13 +141,15 @@ impl<B: Backend> TelegramBot<B> {
             log::info!("Shutting down dispatcher");
         });
 
-        tokio::try_join!(
+        let (_, _, receipt_result) = tokio::try_join!(
             tokio::spawn(async move {
                 log::info!("Started dispatcher");
                 dispatcher.dispatch().await
             }),
-            tokio::spawn(self.clone().update_live_task(ct))
+            tokio::spawn(self.clone().update_live_task(ct.clone())),
+            tokio::spawn(self.clone().money_receipt_task(ct))
         )?;
+        receipt_result?;
 
         Ok(())
     }
@@ -146,6 +168,8 @@ impl<B: Backend> TelegramBot<B> {
                 Command::LiveStatus => self.handle_live_status(&msg).await,
                 Command::UnLiveStatus => self.handle_unlive_status(&msg).await,
                 Command::Update => self.handle_update(&msg).await,
+                Command::Money(args) => self.handle_money(&msg, &args).await,
+                Command::Help(args) => self.handle_help(&msg, &args).await,
             }
         })
         .catch_unwind()
