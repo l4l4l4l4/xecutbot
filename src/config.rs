@@ -10,6 +10,8 @@ pub struct TelegramBotConfig {
     pub private_chat_id: ChatId,
     pub public_channel_id: ChatId,
     pub alert_chat_id: ChatId,
+    #[serde(default)]
+    pub decentrala: Option<crate::decentrala::DecentralaConfig>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

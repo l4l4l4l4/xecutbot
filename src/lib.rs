@@ -2,6 +2,7 @@ pub mod backend;
 pub mod bot;
 pub mod config;
 pub mod datetime;
+pub mod decentrala;
 pub mod rest_api;
 pub mod selfupdate;
 pub mod visits;

@@ -121,13 +121,20 @@ impl<B: Backend> TelegramBot<B> {
             log::info!("Shutting down dispatcher");
         });
 
-        tokio::try_join!(
+        let (_, _, announcement_result) = tokio::try_join!(
             tokio::spawn(async move {
                 log::info!("Started dispatcher");
                 dispatcher.dispatch().await
             }),
-            tokio::spawn(self.clone().update_live_task(ct))
+            tokio::spawn(self.clone().update_live_task(ct.clone())),
+            tokio::spawn(crate::decentrala::run(
+                self.bot.clone(),
+                self.backend().pool().clone(),
+                self.config.decentrala.clone(),
+                ct,
+            ))
         )?;
+        announcement_result?;
 
         Ok(())
     }

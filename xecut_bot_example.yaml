@@ -6,6 +6,19 @@ telegram_bot:
   public_channel_id: 0
   # this can be user id, just don't forget to start chat with the bot first
   alert_chat_id: 0
+  # Optional. Omit this entire section to keep announcements disabled.
+  decentrala:
+    enabled: false
+    chat_id: -1002614784999
+    thread_id: 14828
+    weekday: 4 # Monday=1 ... Sunday=7
+    time: "12:00"
+    timezone: Europe/Belgrade
+    source: https://gitea.dmz.rs/Decentrala/website/raw/branch/master/dogadjaji.csv
+    # Absent/null uses bundled defaults, independent of the working directory.
+    # Relative override paths are resolved from the process working directory.
+    template: null # e.g. /etc/xecutbot/decentrala.j2
+    image: null # e.g. /etc/xecutbot/decentrala-logo.png
 db:
   sqlite_path: "xecut_bot.sqlite?mode=rwc"
 backend:
