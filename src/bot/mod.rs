@@ -1,4 +1,5 @@
 mod announcements;
+mod captcha;
 mod livestatus;
 mod person_details;
 mod status;
@@ -19,7 +20,7 @@ use teloxide::{
     dispatching::{HandlerExt as _, UpdateFilterExt as _},
     dptree,
     prelude::{Dispatcher, Requester as _},
-    types::{CallbackQuery, Message, MessageId, Update},
+    types::{CallbackQuery, ChatMemberUpdated, Message, MessageId, Update},
     utils::command::BotCommands,
 };
 
@@ -64,6 +65,7 @@ pub struct TelegramBot<B: Backend> {
     pub bot: Bot,
     status_message_id: RwLock<Option<MessageId>>,
     backend: Weak<B>,
+    captcha_lock: tokio::sync::Mutex<()>,
 }
 
 impl<B: Backend> TelegramBot<B> {
@@ -74,6 +76,7 @@ impl<B: Backend> TelegramBot<B> {
             bot,
             status_message_id: RwLock::new(None),
             backend,
+            captcha_lock: tokio::sync::Mutex::new(()),
         }))
     }
 
@@ -104,6 +107,7 @@ impl<B: Backend> TelegramBot<B> {
                     .filter_command::<Command>()
                     .endpoint(Self::handle_message),
             )
+            .branch(Update::filter_chat_member().endpoint(Self::handle_chat_member))
             .branch(Update::filter_callback_query().endpoint(Self::handle_callback_outer));
 
         let mut dispatcher = Dispatcher::builder(self.bot.clone(), handler)
@@ -121,14 +125,29 @@ impl<B: Backend> TelegramBot<B> {
             log::info!("Shutting down dispatcher");
         });
 
-        tokio::try_join!(
+        let (_, _, captcha_result) = tokio::try_join!(
             tokio::spawn(async move {
                 log::info!("Started dispatcher");
                 dispatcher.dispatch().await
             }),
-            tokio::spawn(self.clone().update_live_task(ct))
+            tokio::spawn(self.clone().update_live_task(ct.clone())),
+            tokio::spawn(self.clone().captcha_task(ct))
         )?;
+        captcha_result?;
 
+        Ok(())
+    }
+
+    async fn handle_chat_member(self: Arc<Self>, update: ChatMemberUpdated) -> Result<()> {
+        if update.chat.id == self.config.public_chat_id
+            && !update.old_chat_member.is_present()
+            && update.new_chat_member.is_present()
+            && !update.new_chat_member.user.is_bot
+        {
+            if let Err(error) = self.start_captcha(&update).await {
+                log::error!("Failed to start captcha: {error:#}");
+            }
+        }
         Ok(())
     }
 
@@ -196,6 +215,12 @@ impl<B: Backend> TelegramBot<B> {
         let Some(data) = q.data.as_deref() else {
             return Ok(());
         };
+        if data == "/captcha" {
+            if let Err(error) = self.handle_captcha_callback(q).await {
+                log::error!("Failed to confirm captcha: {error:#}");
+            }
+            return Ok(());
+        }
 
         let author = Uid(q.from.id);
 
